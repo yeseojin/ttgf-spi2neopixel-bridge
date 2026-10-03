@@ -26,5 +26,5 @@
     }
   },
   "postCreateCommand": "echo 'source /ttsetup/venv/bin/activate' >> ~/.bashrc",
-  "postStartCommand": "/ttsetup/copy_tt_support_tools.sh"
+  "postStartCommand": "/ttsetup/copy_tt_support_tools.sh && git config --global --add safe.directory ${containerWorkspaceFolder} && (/ttsetup/venv/bin/ciel enable --pdk-family gf180mcu $(/ttsetup/venv/bin/ciel ls --pdk-family gf180mcu | grep -oE '[0-9a-f]{40}' | head -1) || true)"
 }

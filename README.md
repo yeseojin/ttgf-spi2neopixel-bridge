@@ -1,42 +1,88 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+# SPI to NeoPixel Bridge
 
-- [Read the documentation for project](docs/info.md)
+An SPI / QSPI slave for Tiny Tapeout (GF180MCU) that converts bytes written by a microcontroller into WS2812 / WS2812B
+(NeoPixel) waveforms on up to 8 channels in parallel. The LED bit timing is generated in hardware, so the MCU only
+performs ordinary SPI transfers and does not need interrupt-free, timing-critical code.
+
+- [Datasheet / project documentation](docs/info.md)
+
+## Features
+
+- SPI mode 0 slave, 1-bit (02h) and quad (32h) writes
+- 1 to 8 NeoPixel channels, byte interleaved, sent in parallel without gaps between bursts
+- Bit period 1.25 us (800 kHz), high times inside the common WS2812 / WS2812B window
+- System clock 40, 32 or 20 MHz, selected by a configuration command (reset value 40 MHz)
+- READY output for flow control, LATCH command with 300 us reset time
+- Status read (05h) with error flags: short / long burst, unknown command, rejected write, underrun
+- Optional PSRAM snoop mode: LED data is taken directly from a QSPI PSRAM read on the Pmod bus
+
+## Pinout
+
+| Pin       | Function                                      |
+|-----------|-----------------------------------------------|
+| ui[0]     | SCK                                           |
+| ui[1]     | CS_N                                          |
+| ui[2]     | IO0 / MOSI                                    |
+| ui[3]     | IO2                                           |
+| ui[4]     | IO3                                           |
+| ui[5]     | DWIN (snoop data window)                      |
+| uio[0]    | IO1 (quad write) / MISO (status read)         |
+| uio[1..5] | Pmod SD0, SD1, SCK (uio[3]), SD2, SD3 (snoop) |
+| uio[7]    | READY                                         |
+| uo[0..7]  | NeoPixel channel 0..7                         |
+
+I/O voltage is 3.3 V.
+
+## Commands
+
+| Code | Name       | Data                                   |
+|------|------------|----------------------------------------|
+| 01h  | CONFIG     | 1 byte: CH (channels - 1), SEL, SNOOP  |
+| 02h  | WRITE      | N bytes, 1-bit                         |
+| 32h  | WRITE_QUAD | N bytes, 4-bit, high nibble first      |
+| 05h  | STATUS     | 1 byte on MISO, SCK <= clk/8           |
+| A5h  | LATCH      | ends the frame                         |
+
+See [docs/info.md](docs/info.md) for the full register, status and timing description.
+
+## Repository layout
+
+| Path                     | Content                                         |
+|--------------------------|-------------------------------------------------|
+| `src/`                   | Verilog RTL (top level in `project.v`)          |
+| `test/`                  | cocotb testbench (19 tests)                     |
+| `docs/info.md`           | Datasheet text                                  |
+| `docs/block_diagram.drawio` | RTL block diagram (draw.io)                  |
+| `docs/timing_basic.json` | WaveDrom timing diagram, basic mode             |
+| `docs/timing_snoop.json` | WaveDrom timing diagram, PSRAM snoop mode       |
+| `.devcontainer/`         | Development container (LibreLane 3.0.14, GF180MCU PDK) |
+
+## Running the tests
+
+Open the repository in the dev container (VS Code: *Dev Containers: Reopen in Container*), then:
+
+```sh
+cd test
+make
+```
+
+Gate level simulation after hardening:
+
+```sh
+./tt/tt_tool.py --harden --gf
+cd test
+TOP_MODULE=$(cd .. && ./tt/tt_tool.py --print-top-module --gf)
+cp ../runs/wokwi/final/pnl/$TOP_MODULE.pnl.v gate_level_netlist.v
+make -B GATES=yes
+```
 
 ## What is Tiny Tapeout?
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
-
-To learn more and get started, visit https://tinytapeout.com.
-
-## Set up your Verilog project
-
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
-
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
-
-## Enable GitHub actions to build the results page
-
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
-
-## Resources
+Tiny Tapeout is an educational project that makes it easier and cheaper than ever to get your digital and analog
+designs manufactured on a real chip. To learn more and get started, visit https://tinytapeout.com.
 
 - [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
+- [Local hardening guide](https://www.tinytapeout.com/guides/local-hardening/)
 - [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
-
-## What next?
-
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
