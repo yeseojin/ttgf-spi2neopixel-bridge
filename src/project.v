@@ -19,6 +19,10 @@
  *
  * CH, SEL and snoop enable are held in a configuration register written
  * with command 01h (see burst_ctrl). Errors are read with command 05h.
+ *
+ * Flip-flops: 232 register bits in the RTL (sum of the per-module DFF
+ * counts). Synthesis re-encodes the spi_rx cmd and phase state machines
+ * to one-hot, which gives 235 flip-flops after hardening.
  */
 
 `default_nettype none
