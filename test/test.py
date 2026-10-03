@@ -21,8 +21,8 @@ TIMING = {
     0: (25.0, 12, 36, 50, 12000),   # 40 MHz
     1: (31.25, 10, 28, 40, 9600),   # 32 MHz
     2: (50.0, 6, 18, 25, 6000),     # 20 MHz
-    3: (62.5, 5, 14, 20, 4800),     # 16 MHz
 }
+SEL_RESERVED = 3                    # behaves as SEL 2 (20 MHz) [engineer]
 SEL_DEFAULT = 0                     # 40 MHz for all tests except test 2
 SCK_HALF_CLK = 2                    # SCK = clk/4, the maximum [engineer]
 BURST_GAP_CLK = 1                   # minimum gap between bursts
@@ -32,7 +32,7 @@ OP_WRITE = 0x02                     # [engineer]
 OP_STATUS = 0x05                    # [engineer]
 OP_WRITE_QUAD = 0x32                # [engineer]
 OP_LATCH = 0xA5                     # [engineer]
-SEL_RESET = 3                       # reset value of SEL, 16 MHz [engineer]
+SEL_RESET = 0                       # reset value of SEL, 40 MHz [engineer]
 # status byte bits [engineer]
 ST_READY, ST_SHORT, ST_LONG, ST_CMD, ST_REJ, ST_UNDERRUN = 7, 6, 5, 4, 3, 2
 ST_ERR_MASK = 0x7C                  # bits 6..2
@@ -374,8 +374,18 @@ async def test_02c_timing_20mhz(dut):
 
 
 @cocotb.test()
-async def test_02d_timing_16mhz(dut):
-    await timing_for_sel(dut, 3)
+async def test_02d_timing_sel_reserved(dut):
+    # SEL = 11 is reserved and must give the 20 MHz timing
+    pins, mon = await setup(dut, sel=2, config=False)
+    await configure(dut, pins, 1, SEL_RESERVED)
+    _, t0h, t1h, tbit, _ = TIMING[2]
+    chans = [[0xA5, 0x0F], [0x5A, 0xF0]]
+    await send_frame(dut, pins, chans)
+    check_frame(mon, chans, 2)
+    for k in range(2):
+        highs = sorted(set(h for _, h in mon.pulses[k]))
+        assert highs == [t0h, t1h], f"SEL 11 ch{k}: high times {highs}, expected {[t0h, t1h]}"
+        assert set(mon.periods(k)) == {tbit}, f"SEL 11 ch{k}: periods not {tbit}"
 
 
 # ---------------------------------------------------------------------------
@@ -590,12 +600,12 @@ async def test_13_config_in_frame(dut):
 # ---------------------------------------------------------------------------
 @cocotb.test()
 async def test_14_config_register(dut):
-    # Reset value SEL = 16 MHz, CH = 1 channel: run at 16 MHz without CONFIG
+    # Reset value SEL = 40 MHz, CH = 1 channel: run at 40 MHz without CONFIG
     pins, mon = await setup(dut, sel=SEL_RESET, config=False)
     _, t0h, t1h, tbit, _ = TIMING[SEL_RESET]
     await send_frame(dut, pins, [[0xA5]])
     check_frame(mon, [[0xA5]], SEL_RESET)
-    assert set(mon.periods(0)) == {tbit}, "reset SEL must give the 16 MHz bit period"
+    assert set(mon.periods(0)) == {tbit}, "reset SEL must give the 40 MHz bit period"
     # CONFIG with 0 and 2 data bytes: not applied
     await burst(dut, pins, OP_CONFIG, [])
     st = await read_status(dut, pins)

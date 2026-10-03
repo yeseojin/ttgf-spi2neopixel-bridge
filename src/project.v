@@ -38,24 +38,21 @@ module tt_um_yeseojin_spi2neopixel_bridge (
   // Timing constants, clk cycles. Bit period 1.25 us (800 kHz), WS2812 /
   // WS2812B common window, TRESET 300 us. [calculated, engineer confirmed]
   //   SEL  clk      T0H  T1H  TBIT  TRESET
-  //   00   40 MHz   12   36   50    12000
+  //   00   40 MHz   12   36   50    12000   (reset value)
   //   01   32 MHz   10   28   40     9600
   //   10   20 MHz    6   18   25     6000
-  //   11   16 MHz    5   14   20     4800
+  //   11   reserved, same as 20 MHz
   // ---------------------------------------------------------------------
   localparam [5:0]  T0H_40  = 6'd12,  T1H_40  = 6'd36,  TBIT_40  = 6'd50;
   localparam [5:0]  T0H_32  = 6'd10,  T1H_32  = 6'd28,  TBIT_32  = 6'd40;
   localparam [5:0]  T0H_20  = 6'd6,   T1H_20  = 6'd18,  TBIT_20  = 6'd25;
-  localparam [5:0]  T0H_16  = 6'd5,   T1H_16  = 6'd14,  TBIT_16  = 6'd20;
   localparam [13:0] TRST_40 = 14'd12000;
   localparam [13:0] TRST_32 = 14'd9600;
   localparam [13:0] TRST_20 = 14'd6000;
-  localparam [13:0] TRST_16 = 14'd4800;
   // Derived for px_tx: low-time thresholds and TBIT - 1
   localparam [5:0]  T0L_40 = TBIT_40 - T0H_40, T1L_40 = TBIT_40 - T1H_40, TBM1_40 = TBIT_40 - 6'd1;
   localparam [5:0]  T0L_32 = TBIT_32 - T0H_32, T1L_32 = TBIT_32 - T1H_32, TBM1_32 = TBIT_32 - 6'd1;
   localparam [5:0]  T0L_20 = TBIT_20 - T0H_20, T1L_20 = TBIT_20 - T1H_20, TBM1_20 = TBIT_20 - 6'd1;
-  localparam [5:0]  T0L_16 = TBIT_16 - T0H_16, T1L_16 = TBIT_16 - T1H_16, TBM1_16 = TBIT_16 - 6'd1;
 
   // Pin decode
   wire       sck_mcu  = ui_in[0];
@@ -78,8 +75,7 @@ module tt_um_yeseojin_spi2neopixel_bridge (
     case (sel)
       2'b00:   begin t0l = T0L_40; t1l = T1L_40; tbit_m1 = TBM1_40; treset = TRST_40; end
       2'b01:   begin t0l = T0L_32; t1l = T1L_32; tbit_m1 = TBM1_32; treset = TRST_32; end
-      2'b10:   begin t0l = T0L_20; t1l = T1L_20; tbit_m1 = TBM1_20; treset = TRST_20; end
-      default: begin t0l = T0L_16; t1l = T1L_16; tbit_m1 = TBM1_16; treset = TRST_16; end
+      default: begin t0l = T0L_20; t1l = T1L_20; tbit_m1 = TBM1_20; treset = TRST_20; end  // 10, 11
     endcase
   end
 

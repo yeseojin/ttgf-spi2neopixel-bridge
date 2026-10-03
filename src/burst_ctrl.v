@@ -27,7 +27,7 @@
  * never overwritten. Slots written by a short burst are harmless because
  * hold_buf is only marked full by burst_ok.
  *
- * Reset values: CH = 0 (1 channel), SEL = 3 (16 MHz), snoop off
+ * Reset values: CH = 0 (1 channel), SEL = 0 (40 MHz), snoop off
  * [engineer].
  *
  * DFF count: idx 3 + flags 5 + config 6 + config temp 6 + pulses 6 = 26
@@ -76,7 +76,7 @@ module burst_ctrl (
 
   // Reset values of the configuration register [engineer]
   localparam [2:0] CH_RESET  = 3'd0;    // 1 channel
-  localparam [1:0] SEL_RESET = 2'd3;    // 16 MHz
+  localparam [1:0] SEL_RESET = 2'd0;    // 40 MHz
 
   reg [2:0] idx;        // next slot to write
   reg       cmd_seen;   // a full command byte (or snoop start) in this burst
