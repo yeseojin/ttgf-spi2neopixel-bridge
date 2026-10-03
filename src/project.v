@@ -125,6 +125,7 @@ module tt_um_yeseojin_spi2neopixel_bridge (
 
   frame_ctrl u_frame (
       .clk(clk), .rst_n(rst_n),
+      .csn_s(csn_s), .cs_rise(cs_rise),
       .burst_ok(burst_ok), .burst_err(burst_err), .latch_req(latch_req),
       .hold_full(hold_full), .tx_idle(tx_idle), .treset(treset),
       .frame_idle(frame_idle), .accept(accept), .tx_en(tx_en),

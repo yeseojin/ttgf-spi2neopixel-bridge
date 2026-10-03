@@ -10,7 +10,11 @@
  *   DRAIN   remaining data in hold_buf / serializer is sent -> TRESET
  *   TRESET  line held low for TRESET clocks -> IDLE
  *
- * READY = FSM in IDLE or STREAM and hold_buf empty (registered).
+ * READY = FSM in IDLE or STREAM, no burst in progress and hold_buf empty
+ * (registered). "No burst in progress" covers CS_n low and the two clocks
+ * after CS_n rises (cs_rise, burst_ok) until a committed burst shows up
+ * as hold_full. READY therefore drops during every burst and the MCU only
+ * has to wait for it to go high again after raising CS_n.
  * ERROR is set by burst_err or by the start of an underrun. It stays set
  * after the frame ends, so the MCU can read it once READY is high again,
  * and is cleared when the next frame starts (first burst_ok in IDLE).
@@ -24,6 +28,8 @@
 module frame_ctrl (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        csn_s,       // synchronized CS_n level
+    input  wire        cs_rise,
     input  wire        burst_ok,
     input  wire        burst_err,
     input  wire        latch_req,
@@ -60,7 +66,7 @@ module frame_ctrl (
       ready <= 1'b0;
       error <= 1'b0;
     end else begin
-      ready <= accept && !hold_full;
+      ready <= accept && !hold_full && csn_s && !cs_rise && !burst_ok;
 
       if (burst_err)
         error <= 1'b1;
