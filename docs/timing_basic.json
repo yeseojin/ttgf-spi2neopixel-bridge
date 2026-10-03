@@ -1,0 +1,60 @@
+{
+  "signal": [
+    {
+      "name": "CS_n (ui_in[1])",
+      "wave": "10.10.10.101...0.1"
+    },
+    {
+      "name": "IO0/MOSI (ui_in[2])",
+      "wave": "x34x34x34x5x...3x.",
+      "data": [
+        "01h",
+        "CFG",
+        "02h",
+        "ch0..chN-1",
+        "02h",
+        "ch0..chN-1",
+        "A5h",
+        "05h"
+      ]
+    },
+    {
+      "name": "IO1/MISO (uio[0])",
+      "wave": "z...............=z",
+      "data": [
+        "STATUS"
+      ]
+    },
+    {
+      "name": "READY (uio[7])",
+      "wave": "10.10.10.10...10.1"
+    },
+    {
+      "name": "uo_out[0]",
+      "wave": "0.....=......0....",
+      "data": [
+        "NeoPixel bits"
+      ]
+    },
+    {
+      "name": "FSM state",
+      "wave": "2.....3....45.2...",
+      "data": [
+        "IDLE",
+        "STREAM",
+        "DRAIN",
+        "TRESET 300 us",
+        "IDLE"
+      ]
+    }
+  ],
+  "head": {
+    "text": "spi2neopixel_bridge - basic mode (snoop off): CONFIG, WRITE bursts, LATCH, STATUS"
+  },
+  "foot": {
+    "text": "Not to scale. SCK not drawn: SPI mode 0, sample on rising edge, SCK <= clk/4 (status read <= clk/8). One burst = 1 CS_n low period."
+  },
+  "config": {
+    "hscale": 2
+  }
+}

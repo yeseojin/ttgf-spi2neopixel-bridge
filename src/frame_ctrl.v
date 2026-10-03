@@ -1,6 +1,6 @@
 /*
  * frame_ctrl.v
- * Frame state machine, reset/latch timing, READY and ERROR.
+ * Frame state machine, reset/latch timing, READY and error flags.
  *
  * States
  *   IDLE    no frame. First burst_ok starts a frame -> STREAM
@@ -15,12 +15,14 @@
  * after CS_n rises (cs_rise, burst_ok) until a committed burst shows up
  * as hold_full. READY therefore drops during every burst and the MCU only
  * has to wait for it to go high again after raising CS_n.
- * ERROR is set by burst_err or by the start of an underrun. It stays set
- * after the frame ends, so the MCU can read it once READY is high again,
- * and is cleared when the next frame starts (first burst_ok in IDLE).
- * A long burst that starts a frame sets it again in the same cycle.
  *
- * DFF count: state 2 + counter 14 + ready 1 + error 1 = 18
+ * Error flags {short, long, cmd, rej, underrun} are set by the burst_ctrl
+ * pulses and by the start of an underrun. They stay set after the frame
+ * ends, so the MCU can read them once READY is high again, and are
+ * cleared when the next frame starts (first burst_ok in IDLE). Pulses
+ * arriving in that same clock are kept.
+ *
+ * DFF count: state 2 + counter 14 + ready 1 + flags 5 = 22
  */
 
 `default_nettype none
@@ -31,7 +33,10 @@ module frame_ctrl (
     input  wire        csn_s,       // synchronized CS_n level
     input  wire        cs_rise,
     input  wire        burst_ok,
-    input  wire        burst_err,
+    input  wire        err_short,
+    input  wire        err_long,
+    input  wire        err_cmd,
+    input  wire        err_rej,
     input  wire        latch_req,
     input  wire        hold_full,
     input  wire        tx_idle,
@@ -39,8 +44,9 @@ module frame_ctrl (
     output wire        frame_idle,  // to burst_ctrl
     output wire        accept,      // to burst_ctrl
     output wire        tx_en,       // to px_tx
-    output reg         ready,       // uio[2]
-    output reg         error        // uio[3]
+    output reg         ready,       // uio[7]
+    output reg  [4:0]  flags,       // {short, long, cmd, rej, underrun}
+    output reg  [1:0]  state        // 0 IDLE, 1 STREAM, 2 DRAIN, 3 TRESET
 );
 
   localparam [1:0] S_IDLE   = 2'd0;
@@ -48,12 +54,12 @@ module frame_ctrl (
   localparam [1:0] S_DRAIN  = 2'd2;
   localparam [1:0] S_TRESET = 2'd3;
 
-  reg [1:0]  state;
   reg [13:0] cnt;
 
   wire starved  = tx_idle && !hold_full;          // nothing to send
   wire underrun = (state == S_STREAM) && starved;
   wire cnt_done = (cnt == treset - 14'd1);
+  wire [4:0] set = {err_short, err_long, err_cmd, err_rej, 1'b0};
 
   assign frame_idle = (state == S_IDLE);
   assign accept     = (state == S_IDLE) || (state == S_STREAM);
@@ -64,19 +70,18 @@ module frame_ctrl (
       state <= S_IDLE;
       cnt   <= 14'd0;
       ready <= 1'b0;
-      error <= 1'b0;
+      flags <= 5'd0;
     end else begin
       ready <= accept && !hold_full && csn_s && !cs_rise && !burst_ok;
 
-      if (burst_err)
-        error <= 1'b1;
+      flags <= flags | set;
 
       case (state)
         S_IDLE: begin
           cnt <= 14'd0;
           if (burst_ok) begin
             state <= S_STREAM;
-            error <= burst_err;                 // clear, unless this burst failed
+            flags <= set;                       // clear, keep this clock's errors
           end
         end
 
@@ -86,7 +91,7 @@ module frame_ctrl (
             cnt   <= 14'd0;
           end else if (underrun) begin
             if (cnt == 14'd0)
-              error <= 1'b1;                    // underrun started
+              flags[0] <= 1'b1;                 // underrun started
             if (cnt_done) begin
               state <= S_IDLE;                  // treated as LATCH
               cnt   <= 14'd0;

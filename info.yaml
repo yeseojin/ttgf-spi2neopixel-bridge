@@ -34,9 +34,9 @@ pinout:
   ui[2]: "IO0_MOSI"
   ui[3]: "IO2"
   ui[4]: "IO3"
-  ui[5]: "CH0"
-  ui[6]: "CH1"
-  ui[7]: "CH2"
+  ui[5]: "DWIN"
+  ui[6]: ""
+  ui[7]: ""
 
   # Outputs
   uo[0]: "NEOPIXEL_CH0"
@@ -49,14 +49,14 @@ pinout:
   uo[7]: "NEOPIXEL_CH7"
 
   # Bidirectional pins
-  uio[0]: "IO1"
-  uio[1]: "SEL0"
-  uio[2]: "READY"
-  uio[3]: "ERROR"
-  uio[4]: "SEL1"
-  uio[5]: ""
+  uio[0]: "IO1_MISO"
+  uio[1]: "PMOD_SD0"
+  uio[2]: "PMOD_SD1"
+  uio[3]: "PMOD_SCK"
+  uio[4]: "PMOD_SD2"
+  uio[5]: "PMOD_SD3"
   uio[6]: ""
-  uio[7]: ""
+  uio[7]: "READY"
 
 # Do not change!
 yaml_version: 6

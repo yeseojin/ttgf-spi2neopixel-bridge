@@ -1,0 +1,68 @@
+{
+  "signal": [
+    {
+      "name": "PSRAM CE# (uio[6], MCU)",
+      "wave": "10...10...1...."
+    },
+    {
+      "name": "Pmod SD3..0 (uio[5,4,2,1])",
+      "wave": "x345=x345=x....",
+      "data": [
+        "RD cmd",
+        "ADDR",
+        "DUMMY",
+        "ch0..chN-1",
+        "RD cmd",
+        "ADDR",
+        "DUMMY",
+        "ch0..chN-1"
+      ]
+    },
+    {
+      "name": "DWIN (ui_in[5])",
+      "wave": "0...10...10...."
+    },
+    {
+      "name": "MCU CS_n (ui_in[1])",
+      "wave": "1..........01.."
+    },
+    {
+      "name": "MCU IO0 (ui_in[2])",
+      "wave": "x..........5x..",
+      "data": [
+        "A5h"
+      ]
+    },
+    {
+      "name": "READY (uio[7])",
+      "wave": "1...01...010..1"
+    },
+    {
+      "name": "uo_out[0]",
+      "wave": "0....=.......0.",
+      "data": [
+        "NeoPixel bits"
+      ]
+    },
+    {
+      "name": "FSM state",
+      "wave": "2....3......452",
+      "data": [
+        "IDLE",
+        "STREAM",
+        "DRAIN",
+        "TRESET",
+        "IDLE"
+      ]
+    }
+  ],
+  "head": {
+    "text": "spi2neopixel_bridge - snoop mode: chip listens to PSRAM reads on the Pmod bus"
+  },
+  "foot": {
+    "text": "Not to scale. Precondition: CONFIG 01h with bit 5 = 1. Each burst is a new PSRAM read (CE# low <= tCEM). MCU CS_n stays high while DWIN is high. Pmod SCK <= clk/4, SD sampled on rising edge, high nibble first."
+  },
+  "config": {
+    "hscale": 2
+  }
+}

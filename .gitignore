@@ -14,3 +14,4 @@ test/gate_level_netlist.v
 out/
 SESSION_STATE.md
 tt/
+temp/

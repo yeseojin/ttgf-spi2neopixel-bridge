@@ -26,9 +26,17 @@ TIMING = {
 SEL_DEFAULT = 0                     # 40 MHz for all tests except test 2
 SCK_HALF_CLK = 2                    # SCK = clk/4, the maximum [engineer]
 BURST_GAP_CLK = 1                   # minimum gap between bursts
+SCK_HALF_CLK_READ = 4               # status read: SCK = clk/8 [engineer]
+OP_CONFIG = 0x01                    # [engineer]
 OP_WRITE = 0x02                     # [engineer]
+OP_STATUS = 0x05                    # [engineer]
 OP_WRITE_QUAD = 0x32                # [engineer]
 OP_LATCH = 0xA5                     # [engineer]
+SEL_RESET = 3                       # reset value of SEL, 16 MHz [engineer]
+# status byte bits [engineer]
+ST_READY, ST_SHORT, ST_LONG, ST_CMD, ST_REJ, ST_UNDERRUN = 7, 6, 5, 4, 3, 2
+ST_ERR_MASK = 0x7C                  # bits 6..2
+S_IDLE, S_STREAM, S_DRAIN, S_TRESET = 0, 1, 2, 3
 SEED = 1                            # data pattern seed
 
 
@@ -42,24 +50,22 @@ class Pins:
         self.dut = dut
         self.sck = 0
         self.csn = 1
-        self.io = [0, 0, 0, 0]       # IO0..IO3
-        self.ch = 0                  # CH[2:0] = channels - 1
-        self.sel = SEL_DEFAULT
+        self.io = [0, 0, 0, 0]       # MCU bus IO0..IO3
+        self.dwin = 0                # snoop data window
+        self.psck = 0                # Pmod SCK
+        self.sd = [0, 0, 0, 0]       # Pmod SD0..SD3
 
     def apply(self):
         ui = (self.sck | (self.csn << 1) | (self.io[0] << 2) |
-              (self.io[2] << 3) | (self.io[3] << 4) | ((self.ch & 7) << 5))
-        uio = (self.io[1] | ((self.sel & 1) << 1) | (((self.sel >> 1) & 1) << 4))
+              (self.io[2] << 3) | (self.io[3] << 4) | (self.dwin << 5))
+        uio = (self.io[1] | (self.sd[0] << 1) | (self.sd[1] << 2) |
+               (self.psck << 3) | (self.sd[2] << 4) | (self.sd[3] << 5))
         self.dut.ui_in.value = ui
         self.dut.uio_in.value = uio
 
 
 def ready(dut):
-    return (int(dut.uio_out.value) >> 2) & 1
-
-
-def error(dut):
-    return (int(dut.uio_out.value) >> 3) & 1
+    return (int(dut.uio_out.value) >> 7) & 1
 
 
 class Monitor:
@@ -187,6 +193,93 @@ async def latch(dut, pins, wait=True):
     await burst(dut, pins, OP_LATCH, wait=wait)
 
 
+async def read_status(dut, pins):
+    """05h status read at SCK = clk/8. MISO is sampled just before each
+    SCK rising edge."""
+    await FallingEdge(dut.clk)
+    pins.csn = 0
+    pins.apply()
+    for _ in range(SCK_HALF_CLK_READ):
+        await FallingEdge(dut.clk)
+    for i in range(7, -1, -1):                       # command byte
+        pins.io[0] = (OP_STATUS >> i) & 1
+        pins.apply()
+        for _ in range(SCK_HALF_CLK_READ):
+            await FallingEdge(dut.clk)
+        pins.sck = 1
+        pins.apply()
+        for _ in range(SCK_HALF_CLK_READ):
+            await FallingEdge(dut.clk)
+        pins.sck = 0
+        pins.apply()
+    pins.io[0] = 0
+    v = 0
+    for _ in range(8):                               # status byte
+        for _ in range(SCK_HALF_CLK_READ):
+            await FallingEdge(dut.clk)
+        assert int(dut.uio_oe.value) & 1, "MISO must be driven during a status read"
+        v = (v << 1) | (int(dut.uio_out.value) & 1)
+        pins.sck = 1
+        pins.apply()
+        for _ in range(SCK_HALF_CLK_READ):
+            await FallingEdge(dut.clk)
+        pins.sck = 0
+        pins.apply()
+    for _ in range(SCK_HALF_CLK_READ):
+        await FallingEdge(dut.clk)
+    pins.csn = 1
+    pins.apply()
+    for _ in range(4):
+        await FallingEdge(dut.clk)
+    assert (int(dut.uio_oe.value) & 1) == 0, "MISO must be released after CS_n high"
+    return v
+
+
+async def error(dut, pins):
+    return 1 if (await read_status(dut, pins)) & ST_ERR_MASK else 0
+
+
+async def configure(dut, pins, ch, sel, snoop=0, wait=True):
+    await burst(dut, pins, OP_CONFIG, [(snoop << 5) | (sel << 3) | (ch & 7)], wait=wait)
+
+
+async def snoop_burst(dut, pins, data, noise=True):
+    """PSRAM read seen on the Pmod bus. With noise, bus activity outside the
+    data window (command / address / dummy cycles) is generated too."""
+    await wait_ready(dut)
+    if noise:                                        # outside DWIN: ignored
+        for nib in (0xE, 0xB, 0x5, 0xA):
+            pins.sd = [(nib >> j) & 1 for j in range(4)]
+            pins.apply()
+            await half(dut)
+            pins.psck = 1
+            pins.apply()
+            await half(dut)
+            pins.psck = 0
+            pins.apply()
+    await FallingEdge(dut.clk)
+    pins.dwin = 1
+    pins.apply()
+    for _ in range(2 * SCK_HALF_CLK):                # DWIN setup: one SCK period
+        await FallingEdge(dut.clk)
+    for v in data:
+        for nib in ((v >> 4) & 0xF, v & 0xF):
+            pins.sd = [(nib >> j) & 1 for j in range(4)]
+            pins.apply()
+            await half(dut)
+            pins.psck = 1
+            pins.apply()
+            await half(dut)
+            pins.psck = 0
+            pins.apply()
+    await half(dut)
+    pins.dwin = 0
+    pins.sd = [0, 0, 0, 0]
+    pins.apply()
+    for _ in range(BURST_GAP_CLK):
+        await FallingEdge(dut.clk)
+
+
 async def send_frame(dut, pins, chans, quad=False):
     """chans[k] = list of bytes for channel k, all the same length."""
     n = len(chans)
@@ -201,12 +294,10 @@ async def send_frame(dut, pins, chans, quad=False):
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-async def setup(dut, sel=SEL_DEFAULT, ch=0):
+async def setup(dut, sel=SEL_DEFAULT, ch=0, snoop=0, config=True):
     period = TIMING[sel][0]
     cocotb.start_soon(Clock(dut.clk, period, unit="ns").start())
     pins = Pins(dut)
-    pins.sel = sel
-    pins.ch = ch
     dut.ena.value = 1
     pins.apply()
     dut.rst_n.value = 0
@@ -215,6 +306,8 @@ async def setup(dut, sel=SEL_DEFAULT, ch=0):
     await ClockCycles(dut.clk, 5)
     mon = Monitor(dut)
     cocotb.start_soon(mon.run())
+    if config:
+        await configure(dut, pins, ch, sel, snoop)
     return pins, mon
 
 
@@ -238,12 +331,13 @@ def check_frame(mon, chans, sel=SEL_DEFAULT):
 # ---------------------------------------------------------------------------
 @cocotb.test()
 async def test_01_reset_state(dut):
-    pins, mon = await setup(dut)
+    pins, mon = await setup(dut, config=False)
     await FallingEdge(dut.clk)
     assert ready(dut) == 1, "READY must be 1 after reset"
-    assert error(dut) == 0, "ERROR must be 0 after reset"
     assert int(dut.uo_out.value) == 0, "uo_out must be 0 after reset"
-    assert int(dut.uio_oe.value) == 0x0C, f"uio_oe = {int(dut.uio_oe.value):#04x}, expected 0x0c"
+    assert int(dut.uio_oe.value) == 0x80, f"uio_oe = {int(dut.uio_oe.value):#04x}, expected 0x80"
+    st = await read_status(dut, pins)
+    assert st == (1 << ST_READY) | S_IDLE, f"status after reset = {st:#04x}, expected 0x80"
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +385,12 @@ async def test_02d_timing_16mhz(dut):
 async def test_03_write_1bit_channels(dut):
     pins, mon = await setup(dut)
     for n in range(1, 9):
-        pins.ch = n - 1
-        pins.apply()
+        await configure(dut, pins, n - 1, SEL_DEFAULT)
         mon.clear()
         chans = pattern(n, 3, seed=SEED + n)
         await send_frame(dut, pins, chans)
         check_frame(mon, chans)
-        assert error(dut) == 0, f"{n} ch: ERROR set"
+        assert (await error(dut, pins)) == 0, f"{n} ch: ERROR set"
 
 
 # ---------------------------------------------------------------------------
@@ -307,14 +400,13 @@ async def test_03_write_1bit_channels(dut):
 async def test_04_write_quad(dut):
     pins, mon = await setup(dut)
     for n, quad in ((8, True), (3, True), (5, [False, True, False, True, True, False])):
-        pins.ch = n - 1
-        pins.apply()
+        await configure(dut, pins, n - 1, SEL_DEFAULT)
         mon.clear()
         n_bytes = 3 if isinstance(quad, bool) else len(quad)
         chans = pattern(n, n_bytes, seed=SEED + 10 + n)
         await send_frame(dut, pins, chans, quad=quad)
         check_frame(mon, chans)
-        assert error(dut) == 0, f"{n} ch quad={quad}: ERROR set"
+        assert (await error(dut, pins)) == 0, f"{n} ch quad={quad}: ERROR set"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +458,7 @@ async def test_07_short_burst(dut):
     await burst(dut, pins, OP_WRITE, [0x11, 0x21])
     await burst(dut, pins, OP_WRITE, [0xEE])                 # short: 1 of 2
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 1, "short burst must set ERROR"
+    assert (await error(dut, pins)) == 1, "short burst must set ERROR"
     await burst(dut, pins, OP_WRITE, [0x12, 0x22])
     await latch(dut, pins)
     await wait_ready(dut)
@@ -382,7 +474,7 @@ async def test_08_long_burst(dut):
     await burst(dut, pins, OP_WRITE, [0x11, 0x21])
     await burst(dut, pins, OP_WRITE, [0x12, 0x22, 0xEE])     # long: 3 of 2
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 1, "long burst must set ERROR"
+    assert (await error(dut, pins)) == 1, "long burst must set ERROR"
     await latch(dut, pins)
     await wait_ready(dut)
     check_frame(mon, [[0x11, 0x12], [0x21, 0x22]])
@@ -396,14 +488,14 @@ async def test_09_unknown_command(dut):
     pins, mon = await setup(dut, ch=0)
     await burst(dut, pins, 0x11, [0xEE])                     # unknown, in IDLE
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 1, "unknown command must set ERROR"
+    assert (await error(dut, pins)) == 1, "unknown command must set ERROR"
     assert ready(dut) == 1, "unknown command must not start a frame"
     assert mon.pulses[0] == [], "unknown command must not produce output"
     await burst(dut, pins, OP_WRITE, [0x33])                 # frame starts, ERROR cleared
     await burst(dut, pins, 0x11, [0xEE])                     # unknown, in frame
     await burst(dut, pins, OP_WRITE, bits=4)                 # incomplete command
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 1, "unknown / incomplete command in a frame must set ERROR"
+    assert (await error(dut, pins)) == 1, "unknown / incomplete command in a frame must set ERROR"
     await burst(dut, pins, OP_WRITE, [0x44])
     await latch(dut, pins)
     await wait_ready(dut)
@@ -420,7 +512,7 @@ async def test_10_rejected_write(dut):
     await burst(dut, pins, OP_WRITE, [0x22])                 # waits in hold_buf
     await burst(dut, pins, OP_WRITE, [0xEE], wait=False)     # hold_buf full
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 1, "WRITE into a full hold_buf must set ERROR"
+    assert (await error(dut, pins)) == 1, "WRITE into a full hold_buf must set ERROR"
     await latch(dut, pins)
     await burst(dut, pins, OP_WRITE, [0xDD], wait=False)     # during DRAIN / TRESET
     await wait_ready(dut)
@@ -437,12 +529,12 @@ async def test_11_error_persist(dut):
     await burst(dut, pins, 0x11)                             # unknown -> ERROR
     await latch(dut, pins)
     await wait_ready(dut)
-    assert error(dut) == 1, "ERROR must stay set after the frame ends"
+    assert (await error(dut, pins)) == 1, "ERROR must stay set after the frame ends"
     await ClockCycles(dut.clk, 1000)
-    assert error(dut) == 1, "ERROR must stay set while idle"
+    assert (await error(dut, pins)) == 1, "ERROR must stay set while idle"
     await burst(dut, pins, OP_WRITE, [0x22])                 # next frame starts
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 0, "ERROR must clear at the next frame start"
+    assert (await error(dut, pins)) == 0, "ERROR must clear at the next frame start"
     await latch(dut, pins)
     await wait_ready(dut)
     check_frame(mon, [[0x11, 0x22]])
@@ -457,36 +549,125 @@ async def test_12_underrun(dut):
     _, _, _, tbit, treset = TIMING[SEL_DEFAULT]
     await burst(dut, pins, OP_WRITE, [0x11])
     await ClockCycles(dut.clk, 3 * 8 * tbit)                 # 3 byte times, no data
-    assert error(dut) == 1, "underrun must set ERROR"
+    assert (await error(dut, pins)) == 1, "underrun must set ERROR"
     await burst(dut, pins, OP_WRITE, [0x22])                 # resumes within TRESET
     await ClockCycles(dut.clk, treset + 20 * tbit)           # no LATCH, timeout
     await FallingEdge(dut.clk)
     assert ready(dut) == 1, "after the underrun timeout READY must be high"
     assert mon.bytes(0, SEL_DEFAULT) == [0x11, 0x22]
     # back in IDLE: a new frame with 2 channels must be accepted and clear ERROR
-    pins.ch = 1
-    pins.apply()
+    await configure(dut, pins, 1, SEL_DEFAULT)      # accepted only in IDLE
     mon.clear()
     await burst(dut, pins, OP_WRITE, [0x33, 0x43])
     await ClockCycles(dut.clk, 10)
-    assert error(dut) == 0, "new frame after the timeout must clear ERROR"
+    assert (await error(dut, pins)) == 0, "new frame after the timeout must clear ERROR"
     await latch(dut, pins)
     await wait_ready(dut)
     check_frame(mon, [[0x33], [0x43]])
 
 
 # ---------------------------------------------------------------------------
-# 13. CH pins are held for the whole frame
+# 13. CONFIG outside IDLE is rejected, configuration unchanged
 # ---------------------------------------------------------------------------
 @cocotb.test()
-async def test_13_ch_latched(dut):
+async def test_13_config_in_frame(dut):
     pins, mon = await setup(dut, ch=1)
     await burst(dut, pins, OP_WRITE, [0x11, 0x21])
-    pins.ch = 7                                              # change mid frame
-    pins.apply()
+    await configure(dut, pins, 7, SEL_DEFAULT)               # in STREAM
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_REJ), f"CONFIG in a frame must set the reject flag, status {st:#04x}"
     await burst(dut, pins, OP_WRITE, [0x12, 0x22])
     await burst(dut, pins, OP_WRITE, [0x13, 0x23])
     await latch(dut, pins)
     await wait_ready(dut)
-    assert error(dut) == 0, "2-byte bursts must still be valid after a CH change"
+    st = await read_status(dut, pins)
+    assert not (st & ((1 << ST_SHORT) | (1 << ST_LONG))), "2-byte bursts must stay valid"
     check_frame(mon, [[0x11, 0x12, 0x13], [0x21, 0x22, 0x23]])
+
+
+# ---------------------------------------------------------------------------
+# 14. Configuration register: reset value and wrong length
+# ---------------------------------------------------------------------------
+@cocotb.test()
+async def test_14_config_register(dut):
+    # Reset value SEL = 16 MHz, CH = 1 channel: run at 16 MHz without CONFIG
+    pins, mon = await setup(dut, sel=SEL_RESET, config=False)
+    _, t0h, t1h, tbit, _ = TIMING[SEL_RESET]
+    await send_frame(dut, pins, [[0xA5]])
+    check_frame(mon, [[0xA5]], SEL_RESET)
+    assert set(mon.periods(0)) == {tbit}, "reset SEL must give the 16 MHz bit period"
+    # CONFIG with 0 and 2 data bytes: not applied
+    await burst(dut, pins, OP_CONFIG, [])
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_SHORT), f"CONFIG without data must set the short flag, status {st:#04x}"
+    await burst(dut, pins, OP_CONFIG, [0x07, 0x07])
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_LONG), f"CONFIG with 2 bytes must set the long flag, status {st:#04x}"
+    mon.clear()
+    await send_frame(dut, pins, [[0x3C]])                    # still 1 channel
+    check_frame(mon, [[0x3C]], SEL_RESET)
+    # valid CONFIG: 2 channels
+    await configure(dut, pins, 1, SEL_RESET)
+    mon.clear()
+    await send_frame(dut, pins, [[0x5A], [0xC3]])
+    check_frame(mon, [[0x5A], [0xC3]], SEL_RESET)
+
+
+# ---------------------------------------------------------------------------
+# 15. Status byte: each error flag and the FSM state
+# ---------------------------------------------------------------------------
+@cocotb.test()
+async def test_15_status_flags(dut):
+    pins, mon = await setup(dut, ch=1)
+    _, _, _, tbit, _ = TIMING[SEL_DEFAULT]
+    st = await read_status(dut, pins)
+    assert st == (1 << ST_READY) | S_IDLE, f"idle status {st:#04x}"
+    await burst(dut, pins, OP_WRITE, [0x11, 0x21])           # frame starts
+    st = await read_status(dut, pins)
+    assert st & 3 == S_STREAM, f"state must be STREAM, status {st:#04x}"
+    assert st & ST_ERR_MASK == 0, f"no error expected, status {st:#04x}"
+    cases = [
+        ("short", ST_SHORT, lambda: burst(dut, pins, OP_WRITE, [0xEE])),
+        ("long", ST_LONG, lambda: burst(dut, pins, OP_WRITE, [0x12, 0x22, 0xEE])),
+        ("cmd", ST_CMD, lambda: burst(dut, pins, 0x11)),
+    ]
+    for name, bit, action in cases:
+        await action()
+        st = await read_status(dut, pins)
+        assert st & (1 << bit), f"{name}: flag bit {bit} not set, status {st:#04x}"
+    await latch(dut, pins)
+    st = await read_status(dut, pins)
+    assert st & 3 in (S_DRAIN, S_TRESET), f"state must be DRAIN or TRESET, status {st:#04x}"
+    assert not st & (1 << ST_READY), "READY bit must be 0 after LATCH"
+    await wait_ready(dut)
+    st = await read_status(dut, pins)
+    assert st & 3 == S_IDLE and st & (1 << ST_READY), f"back to IDLE, status {st:#04x}"
+    assert st & ((1 << ST_SHORT) | (1 << ST_LONG) | (1 << ST_CMD)) == \
+        (1 << ST_SHORT) | (1 << ST_LONG) | (1 << ST_CMD), "flags must stay after the frame"
+    # underrun flag in a new frame clears the old flags
+    await burst(dut, pins, OP_WRITE, [0x31, 0x41])
+    await ClockCycles(dut.clk, 3 * 8 * tbit)
+    st = await read_status(dut, pins)
+    assert st & ST_ERR_MASK == (1 << ST_UNDERRUN), f"only underrun expected, status {st:#04x}"
+
+
+# ---------------------------------------------------------------------------
+# 16. PSRAM snoop mode
+# ---------------------------------------------------------------------------
+@cocotb.test()
+async def test_16_snoop(dut):
+    pins, mon = await setup(dut, ch=2, snoop=1)
+    chans = pattern(3, 4, seed=SEED + 30)
+    for j in range(4):
+        await snoop_burst(dut, pins, [chans[k][j] for k in range(3)])
+    # commands still work on the MCU bus while DWIN is low
+    st = await read_status(dut, pins)
+    assert st & ST_ERR_MASK == 0, f"no error expected in snoop mode, status {st:#04x}"
+    await latch(dut, pins)
+    await wait_ready(dut)
+    check_frame(mon, chans)
+    # a normal MCU bus WRITE frame still works with snoop enabled
+    mon.clear()
+    chans2 = pattern(3, 2, seed=SEED + 31)
+    await send_frame(dut, pins, chans2)
+    check_frame(mon, chans2)
