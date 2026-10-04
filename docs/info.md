@@ -142,6 +142,15 @@ Usage conditions:
 - Keep the MCU bus CS_N high while DWIN is high (snoop mode).
 - I/O voltage is 3.3 V.
 
+Notes for the TT ETR demoboard:
+
+- The MCU bus is on `ui_in` (driven by RP2350B GPIO17..24) instead of the recommended SPI pins on `uio`, because
+  `uio` is kept free for the QSPI Pmod pinout used by the snoop mode.
+- Set all input DIP switches to OFF; they are connected to `ui_in` and would interfere with the MCU bus.
+- `uo_out[0..7]` also drive the 7-segment display through jumpers JP1..JP8 and 510 ohm resistors. The display
+  does not affect the function, but it loads the NeoPixel outputs; the schematic notes that these jumpers allow the
+  display to be disconnected.
+
 ## External hardware
 
 - WS2812B or SK6812 / SK6812RGBW (NeoPixel) LED strips on `uo_out[0]` .. `uo_out[7]`, one strip per channel.
