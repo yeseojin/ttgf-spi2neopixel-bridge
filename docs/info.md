@@ -155,6 +155,10 @@ Notes for the TT ETR demoboard:
 
 - WS2812B or SK6812 / SK6812RGBW (NeoPixel) LED strips on `uo_out[0]` .. `uo_out[7]`, one strip per channel.
   WS2812B-V5 strips are driven with the SK6812 type.
-- For snoop mode only: Tiny Tapeout QSPI Pmod on the bidirectional Pmod header, with jumper rows F (Flash CS) and
-  B (PSRAM B CS) on J2 cut, so that only PSRAM A is used and uio[0] / uio[7] are free. Start a new PSRAM read for
-  every burst so that the PSRAM CE# low time stays within its specification. Do not plug an unmodified QSPI Pmod.
+- Optional, for snoop mode only: a PSRAM module on the bidirectional Pmod header with SD0, SD1, SCK, SD2, SD3 on
+  `uio[1]` .. `uio[5]` (SCK on `uio[3]`) and the PSRAM CS on `uio[6]`, driven by the MCU. `uio[0]` (MISO) and
+  `uio[7]` (READY) are outputs of this design and must not be connected to other devices on the module.
+- When a compatible QSPI Pmod (such as the Tiny Tapeout QSPI Pmod) is used instead of a dedicated module, jumper
+  rows F (Flash CS) and B (PSRAM B CS) on J2 **must** be cut, so that only PSRAM A is used and `uio[0]` / `uio[7]`
+  are free. Do not plug an unmodified QSPI Pmod.
+- Start a new PSRAM read for every burst so that the PSRAM CE# low time stays within its specification.
