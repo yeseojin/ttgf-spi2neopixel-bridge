@@ -31,7 +31,11 @@ performs ordinary SPI transfers and does not need interrupt-free, timing-critica
 | ui[4]     | IO3                                           |
 | ui[5]     | DWIN (snoop data window)                      |
 | uio[0]    | IO1 (quad write) / MISO (status read)         |
-| uio[1..5] | Pmod SD0, SD1, SCK (uio[3]), SD2, SD3 (snoop) |
+| uio[1]    | Pmod SD0 (snoop)                              |
+| uio[2]    | Pmod SD1 (snoop)                              |
+| uio[3]    | Pmod SCK (snoop)                              |
+| uio[4]    | Pmod SD2 (snoop)                              |
+| uio[5]    | Pmod SD3 (snoop)                              |
 | uio[7]    | READY                                         |
 | uo[0..7]  | NeoPixel channel 0..7                         |
 
