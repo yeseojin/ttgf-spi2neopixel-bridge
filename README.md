@@ -2,7 +2,7 @@
 
 # SPI to NeoPixel Bridge
 
-An SPI / QSPI slave for Tiny Tapeout (GF180MCU) that converts bytes written by a microcontroller into WS2812 / WS2812B
+An SPI / QSPI slave for Tiny Tapeout (GF180MCU) that converts bytes written by a microcontroller into WS2812B / SK6812
 (NeoPixel) waveforms on up to 8 channels in parallel. The LED bit timing is generated in hardware, so the MCU only
 performs ordinary SPI transfers and does not need interrupt-free, timing-critical code.
 
@@ -12,7 +12,9 @@ performs ordinary SPI transfers and does not need interrupt-free, timing-critica
 
 - SPI mode 0 slave, 1-bit (02h) and quad (32h) writes
 - 1 to 8 NeoPixel channels, byte interleaved, sent in parallel without gaps between bursts
-- Bit period 1.25 us (800 kHz), high times inside the common WS2812 / WS2812B window
+- LED type per channel: WS2812B (450 / 800 ns high) or SK6812 / SK6812RGBW / WS2812B-V5 (300 / 600 ns high),
+  common bit period 1.25 us (800 kHz)
+- RGB and RGBW LEDs (3 or 4 bytes per LED, chosen by the MCU)
 - System clock 40, 32 or 20 MHz, selected by a configuration command (reset value 40 MHz)
 - READY output for flow control, LATCH command with 300 us reset time
 - Status read (05h) with error flags: short / long burst, unknown command, rejected write, underrun
@@ -40,6 +42,7 @@ I/O voltage is 3.3 V.
 | Code | Name       | Data                                   |
 |------|------------|----------------------------------------|
 | 01h  | CONFIG     | 1 byte: CH (channels - 1), SEL, SNOOP  |
+| 31h  | TYPE       | 1 byte: bit k = 1 for SK6812 on ch k   |
 | 02h  | WRITE      | N bytes, 1-bit                         |
 | 32h  | WRITE_QUAD | N bytes, 4-bit, high nibble first      |
 | 05h  | STATUS     | 1 byte on MISO, SCK <= clk/8           |
@@ -52,7 +55,7 @@ See [docs/info.md](docs/info.md) for the full register, status and timing descri
 | Path                     | Content                                         |
 |--------------------------|-------------------------------------------------|
 | `src/`                   | Verilog RTL (top level in `project.v`)          |
-| `test/`                  | cocotb testbench (19 tests)                     |
+| `test/`                  | cocotb testbench (22 tests)                     |
 | `docs/info.md`           | Datasheet text                                  |
 | `docs/block_diagram.drawio` | RTL block diagram (draw.io)                  |
 | `docs/timing_basic.json` | WaveDrom timing diagram, basic mode             |
