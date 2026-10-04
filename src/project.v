@@ -18,11 +18,12 @@
  *                                      uio[7]  out  READY
  *
  * CH, SEL and snoop enable are held in a configuration register written
- * with command 01h (see burst_ctrl). Errors are read with command 05h.
+ * with command 01h, the LED type per channel with command 31h (see
+ * burst_ctrl). Errors are read with command 05h.
  *
- * Flip-flops: 232 register bits in the RTL (sum of the per-module DFF
+ * Flip-flops: 243 register bits in the RTL (sum of the per-module DFF
  * counts). Synthesis re-encodes the spi_rx cmd and phase state machines
- * to one-hot, which gives 235 flip-flops after hardening.
+ * to one-hot, which gives 247 flip-flops.
  */
 
 `default_nettype none
@@ -39,24 +40,26 @@ module tt_um_yeseojin_spi2neopixel_bridge (
 );
 
   // ---------------------------------------------------------------------
-  // Timing constants, clk cycles. Bit period 1.25 us (800 kHz), WS2812 /
-  // WS2812B common window, TRESET 300 us. [calculated, engineer confirmed]
-  //   SEL  clk      T0H  T1H  TBIT  TRESET
-  //   00   40 MHz   12   36   50    12000   (reset value)
-  //   01   32 MHz   10   28   40     9600
-  //   10   20 MHz    6   18   25     6000
+  // Timing constants, clk cycles. Bit period 1.25 us (800 kHz) for both LED
+  // types, TRESET 300 us. [calculated, engineer confirmed]
+  //                     WS2812B      SK6812
+  //   SEL  clk      TBIT  T0H  T1H   T0H  T1H   TRESET
+  //   00   40 MHz    50    18   32    12   24    12000   (reset value)
+  //   01   32 MHz    40    14   26    10   19     9600
+  //   10   20 MHz    25     9   16     6   12     6000
   //   11   reserved, same as 20 MHz
+  // WS2812B: 450 / 800 ns high. SK6812 (also WS2812B-V5): 300 / 600 ns.
   // ---------------------------------------------------------------------
-  localparam [5:0]  T0H_40  = 6'd12,  T1H_40  = 6'd36,  TBIT_40  = 6'd50;
-  localparam [5:0]  T0H_32  = 6'd10,  T1H_32  = 6'd28,  TBIT_32  = 6'd40;
-  localparam [5:0]  T0H_20  = 6'd6,   T1H_20  = 6'd18,  TBIT_20  = 6'd25;
+  localparam [5:0]  TBIT_40 = 6'd50, TBIT_32 = 6'd40, TBIT_20 = 6'd25;
+  localparam [5:0]  WS_T0H_40 = 6'd18, WS_T1H_40 = 6'd32;
+  localparam [5:0]  WS_T0H_32 = 6'd14, WS_T1H_32 = 6'd26;
+  localparam [5:0]  WS_T0H_20 = 6'd9,  WS_T1H_20 = 6'd16;
+  localparam [5:0]  SK_T0H_40 = 6'd12, SK_T1H_40 = 6'd24;
+  localparam [5:0]  SK_T0H_32 = 6'd10, SK_T1H_32 = 6'd19;
+  localparam [5:0]  SK_T0H_20 = 6'd6,  SK_T1H_20 = 6'd12;
   localparam [13:0] TRST_40 = 14'd12000;
   localparam [13:0] TRST_32 = 14'd9600;
   localparam [13:0] TRST_20 = 14'd6000;
-  // Derived for px_tx: low-time thresholds and TBIT - 1
-  localparam [5:0]  T0L_40 = TBIT_40 - T0H_40, T1L_40 = TBIT_40 - T1H_40, TBM1_40 = TBIT_40 - 6'd1;
-  localparam [5:0]  T0L_32 = TBIT_32 - T0H_32, T1L_32 = TBIT_32 - T1H_32, TBM1_32 = TBIT_32 - 6'd1;
-  localparam [5:0]  T0L_20 = TBIT_20 - T0H_20, T1L_20 = TBIT_20 - T1H_20, TBM1_20 = TBIT_20 - 6'd1;
 
   // Pin decode
   wire       sck_mcu  = ui_in[0];
@@ -70,16 +73,32 @@ module tt_um_yeseojin_spi2neopixel_bridge (
   wire [2:0] ch_n;
   wire [1:0] cfg_sel;
   wire       cfg_snoop;
+  wire [7:0] ch_type;
   wire [1:0] sel = cfg_sel;
 
-  // Timing selection
-  reg [5:0]  t0l, t1l, tbit_m1;
+  // Timing selection: low-time thresholds (TBIT - TH) per LED type
+  reg [5:0]  t0l_ws, t1l_ws, t0l_sk, t1l_sk, tbit_m1;
   reg [13:0] treset;
   always @(*) begin
     case (sel)
-      2'b00:   begin t0l = T0L_40; t1l = T1L_40; tbit_m1 = TBM1_40; treset = TRST_40; end
-      2'b01:   begin t0l = T0L_32; t1l = T1L_32; tbit_m1 = TBM1_32; treset = TRST_32; end
-      default: begin t0l = T0L_20; t1l = T1L_20; tbit_m1 = TBM1_20; treset = TRST_20; end  // 10, 11
+      2'b00: begin
+        tbit_m1 = TBIT_40 - 6'd1;
+        t0l_ws = TBIT_40 - WS_T0H_40;  t1l_ws = TBIT_40 - WS_T1H_40;
+        t0l_sk = TBIT_40 - SK_T0H_40;  t1l_sk = TBIT_40 - SK_T1H_40;
+        treset = TRST_40;
+      end
+      2'b01: begin
+        tbit_m1 = TBIT_32 - 6'd1;
+        t0l_ws = TBIT_32 - WS_T0H_32;  t1l_ws = TBIT_32 - WS_T1H_32;
+        t0l_sk = TBIT_32 - SK_T0H_32;  t1l_sk = TBIT_32 - SK_T1H_32;
+        treset = TRST_32;
+      end
+      default: begin  // 10, 11
+        tbit_m1 = TBIT_20 - 6'd1;
+        t0l_ws = TBIT_20 - WS_T0H_20;  t1l_ws = TBIT_20 - WS_T1H_20;
+        t0l_sk = TBIT_20 - SK_T0H_20;  t1l_sk = TBIT_20 - SK_T1H_20;
+        treset = TRST_20;
+      end
     endcase
   end
 
@@ -130,13 +149,13 @@ module tt_um_yeseojin_spi2neopixel_bridge (
       .clk(clk), .rst_n(rst_n),
       .cs_fall(cs_fall), .cs_rise(cs_rise),
       .cmd_valid(cmd_valid), .cmd(cmd), .byte_valid(byte_valid),
-      .cfg_byte(byte_data[5:0]),
+      .cfg_byte(byte_data),
       .frame_idle(frame_idle), .accept(accept), .hold_full(hold_full),
       .wr_en(wr_en), .wr_idx(wr_idx),
       .burst_ok(burst_ok), .latch_req(latch_req),
       .err_short(err_short), .err_long(err_long),
       .err_cmd(err_cmd), .err_rej(err_rej),
-      .ch_n(ch_n), .cfg_sel(cfg_sel), .cfg_snoop(cfg_snoop)
+      .ch_n(ch_n), .cfg_sel(cfg_sel), .cfg_snoop(cfg_snoop), .ch_type(ch_type)
   );
 
   hold_buf u_hold (
@@ -149,7 +168,8 @@ module tt_um_yeseojin_spi2neopixel_bridge (
   px_tx u_tx (
       .clk(clk), .rst_n(rst_n),
       .tx_en(tx_en), .hold_data(hold_data), .hold_full(hold_full),
-      .ch_n(ch_n), .t0l(t0l), .t1l(t1l), .tbit_m1(tbit_m1),
+      .ch_n(ch_n), .ch_type(ch_type), .tbit_m1(tbit_m1),
+      .t0l_ws(t0l_ws), .t1l_ws(t1l_ws), .t0l_sk(t0l_sk), .t1l_sk(t1l_sk),
       .take(take), .tx_idle(tx_idle), .dout(dout)
   );
 

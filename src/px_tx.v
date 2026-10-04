@@ -18,7 +18,10 @@
  *    shift enable that fans out to all 64 shift register bits therefore
  *    starts at a flip-flop output instead of after a compare.
  *  - The line is high while cc >= TBIT - TH, i.e. for the first TH clocks
- *    of the bit. The low-time thresholds t0l / t1l come from the top level.
+ *    of the bit. The low-time thresholds come from the top level, one pair
+ *    per LED type. ch_type selects the pair per channel (0 = WS2812B,
+ *    1 = SK6812); the bit period is the same for both types, so all
+ *    channels share one bit timer.
  *
  * Outputs are registered to keep the pins glitch free. This delays every
  * edge by one clock, which does not change any pulse width.
@@ -26,7 +29,7 @@
  * Channels above ch_n are held low.
  *
  * DFF count: shift 8 x 8 + clk counter 6 + bit counter 3 + run 1
- *            + bit_end 1 + output 8 = 83
+ *            + bit_end 1 + output 8 = 83 (ch_type is held in burst_ctrl)
  */
 
 `default_nettype none
@@ -38,8 +41,11 @@ module px_tx (
     input  wire [63:0] hold_data,
     input  wire        hold_full,
     input  wire [2:0]  ch_n,        // active channels - 1
-    input  wire [5:0]  t0l,         // TBIT - T0H, clocks, from top level
-    input  wire [5:0]  t1l,         // TBIT - T1H
+    input  wire [7:0]  ch_type,     // LED type per channel, 1 = SK6812
+    input  wire [5:0]  t0l_ws,      // TBIT - T0H, WS2812B, clocks
+    input  wire [5:0]  t1l_ws,      // TBIT - T1H, WS2812B
+    input  wire [5:0]  t0l_sk,      // TBIT - T0H, SK6812
+    input  wire [5:0]  t1l_sk,      // TBIT - T1H, SK6812
     input  wire [5:0]  tbit_m1,     // TBIT - 1
     output wire        take,        // one clk pulse: hold_buf copied
     output wire        tx_idle,     // no byte in progress
@@ -103,13 +109,16 @@ module px_tx (
           sh[g] <= {sh[g][6:0], 1'b0};
       end
 
+      // Low-time threshold for this channel's LED type and current bit
+      wire [5:0] thr = ch_type[g] ? (sh[g][7] ? t1l_sk : t0l_sk)
+                                  : (sh[g][7] ? t1l_ws : t0l_ws);
+
       // Output level: high for the first TH clocks of the bit
       always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
           dout[g] <= 1'b0;
         else
-          dout[g] <= run && ch_mask[g] &&
-                     (cc >= (sh[g][7] ? t1l : t0l));
+          dout[g] <= run && ch_mask[g] && (cc >= thr);
       end
     end
   endgenerate

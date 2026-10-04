@@ -4,6 +4,7 @@
  *
  * Bursts on the MCU bus start with a command byte, always 1-bit on IO0:
  *   01h CONFIG      -> 1 data byte, 1-bit
+ *   31h TYPE        -> 1 data byte, 1-bit (LED type per channel)
  *   02h WRITE       -> data bytes, 1-bit
  *   32h WRITE_QUAD  -> data bytes, 4-bit, high nibble first,
  *                      IO3 = bit 7 / bit 3, IO0 = bit 4 / bit 0
@@ -52,6 +53,7 @@ module spi_rx (
   localparam [7:0] OP_CONFIG     = 8'h01;
   localparam [7:0] OP_WRITE      = 8'h02;
   localparam [7:0] OP_STATUS     = 8'h05;
+  localparam [7:0] OP_TYPE       = 8'h31;
   localparam [7:0] OP_WRITE_QUAD = 8'h32;
   localparam [7:0] OP_LATCH      = 8'hA5;
 
@@ -62,6 +64,7 @@ module spi_rx (
   localparam [2:0] CMD_LATCH      = 3'd3;
   localparam [2:0] CMD_CONFIG     = 3'd4;
   localparam [2:0] CMD_STATUS     = 3'd5;
+  localparam [2:0] CMD_TYPE       = 3'd6;
 
   // Receive phase
   localparam [2:0] PH_CMD    = 3'd0;
@@ -120,6 +123,7 @@ module spi_rx (
               cnt       <= 3'd0;
               case (shift_1bit)
                 OP_CONFIG:     begin cmd <= CMD_CONFIG;     phase <= PH_DATA1;  end
+                OP_TYPE:       begin cmd <= CMD_TYPE;       phase <= PH_DATA1;  end
                 OP_WRITE:      begin cmd <= CMD_WRITE;      phase <= PH_DATA1;  end
                 OP_WRITE_QUAD: begin cmd <= CMD_WRITE_QUAD; phase <= PH_DATA4;  end
                 OP_LATCH:      begin cmd <= CMD_LATCH;      phase <= PH_IGNORE; end

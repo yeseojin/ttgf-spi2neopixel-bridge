@@ -15,12 +15,18 @@ from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 # ---------------------------------------------------------------------------
 # Fixed values
 # ---------------------------------------------------------------------------
-# SEL -> (clk period ns, T0H, T1H, TBIT, TRESET) in clk cycles
+# SEL -> (clk period ns, T0H, T1H, TBIT, TRESET) in clk cycles, WS2812B type
 # [calculated, engineer confirmed]
 TIMING = {
-    0: (25.0, 12, 36, 50, 12000),   # 40 MHz
-    1: (31.25, 10, 28, 40, 9600),   # 32 MHz
-    2: (50.0, 6, 18, 25, 6000),     # 20 MHz
+    0: (25.0, 18, 32, 50, 12000),   # 40 MHz
+    1: (31.25, 14, 26, 40, 9600),   # 32 MHz
+    2: (50.0, 9, 16, 25, 6000),     # 20 MHz
+}
+# SK6812 high times per SEL: (T0H, T1H) in clk cycles [calculated, engineer confirmed]
+TIMING_SK = {
+    0: (12, 24),
+    1: (10, 19),
+    2: (6, 12),
 }
 SEL_RESERVED = 3                    # behaves as SEL 2 (20 MHz) [engineer]
 SEL_DEFAULT = 0                     # 40 MHz for all tests except test 2
@@ -30,6 +36,7 @@ SCK_HALF_CLK_READ = 4               # status read: SCK = clk/8 [engineer]
 OP_CONFIG = 0x01                    # [engineer]
 OP_WRITE = 0x02                     # [engineer]
 OP_STATUS = 0x05                    # [engineer]
+OP_TYPE = 0x31                      # [engineer]
 OP_WRITE_QUAD = 0x32                # [engineer]
 OP_LATCH = 0xA5                     # [engineer]
 SEL_RESET = 0                       # reset value of SEL, 40 MHz [engineer]
@@ -79,6 +86,7 @@ class Monitor:
         self.pulses = [[] for _ in range(8)]   # (rise cycle, high cycles)
         self.ready_rise = []                   # cycles where READY went high
         self.last_ready = 0
+        self.ch_type = 0                       # bit k = 1: channel k is SK6812
 
     def clear(self):
         self.pulses = [[] for _ in range(8)]
@@ -101,8 +109,13 @@ class Monitor:
                 self.ready_rise.append(self.cycle)
             self.last_ready = r
 
+    def high_times(self, k, sel):
+        if (self.ch_type >> k) & 1:
+            return TIMING_SK[sel]
+        return TIMING[sel][1:3]
+
     def bits(self, k, sel):
-        _, t0h, t1h, _, _ = TIMING[sel]
+        t0h, t1h = self.high_times(k, sel)
         out = []
         for _, h in self.pulses[k]:
             assert h in (t0h, t1h), f"ch{k}: high time {h} clk is neither T0H {t0h} nor T1H {t1h}"
@@ -681,3 +694,66 @@ async def test_16_snoop(dut):
     chans2 = pattern(3, 2, seed=SEED + 31)
     await send_frame(dut, pins, chans2)
     check_frame(mon, chans2)
+
+
+# ---------------------------------------------------------------------------
+# 17. LED type per channel (TYPE 31h), 40 MHz
+# ---------------------------------------------------------------------------
+@cocotb.test()
+async def test_17_channel_type(dut):
+    pins, mon = await setup(dut, ch=5)
+    tbit = TIMING[SEL_DEFAULT][3]
+    await burst(dut, pins, OP_TYPE, [0x20])                  # ch5 = SK6812
+    mon.ch_type = 0x20
+    # ch0 WS2812B: G R B + pad, ch5 SK6812RGBW: G R B W, ch1..4: 00
+    chans = [[0xFF, 0x00, 0x00, 0x00]] + [[0x00] * 4] * 4 + [[0x00, 0xFF, 0x00, 0x00]]
+    await send_frame(dut, pins, chans)
+    check_frame(mon, chans)
+    ws = sorted(set(h for _, h in mon.pulses[0]))
+    sk = sorted(set(h for _, h in mon.pulses[5]))
+    assert ws == list(TIMING[SEL_DEFAULT][1:3]), f"ch0 WS2812B high times {ws}"
+    assert sk == list(TIMING_SK[SEL_DEFAULT]), f"ch5 SK6812 high times {sk}"
+    assert set(mon.periods(0)) == {tbit} and set(mon.periods(5)) == {tbit}, "bit period must be shared"
+    assert [r for r, _ in mon.pulses[0]] == [r for r, _ in mon.pulses[5]], "channels must rise together"
+    # TYPE with wrong length: not applied
+    await burst(dut, pins, OP_TYPE, [])
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_SHORT), f"TYPE without data must set the short flag, status {st:#04x}"
+    await burst(dut, pins, OP_TYPE, [0xFF, 0xFF])
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_LONG), f"TYPE with 2 bytes must set the long flag, status {st:#04x}"
+    # TYPE inside a frame: rejected, types unchanged
+    mon.clear()
+    await burst(dut, pins, OP_WRITE, [0x81, 0, 0, 0, 0, 0x81])
+    await burst(dut, pins, OP_TYPE, [0xFF])
+    st = await read_status(dut, pins)
+    assert st & (1 << ST_REJ), f"TYPE in a frame must set the reject flag, status {st:#04x}"
+    await latch(dut, pins)
+    await wait_ready(dut)
+    assert sorted(set(h for _, h in mon.pulses[0])) == ws, "ch0 type must stay WS2812B"
+    assert sorted(set(h for _, h in mon.pulses[5])) == sk, "ch5 type must stay SK6812"
+
+
+# ---------------------------------------------------------------------------
+# 18. LED type per channel at 32 MHz and 20 MHz
+# ---------------------------------------------------------------------------
+async def channel_type_for_sel(dut, sel):
+    pins, mon = await setup(dut, sel=sel, ch=1)
+    await burst(dut, pins, OP_TYPE, [0x02])                  # ch1 = SK6812
+    mon.ch_type = 0x02
+    chans = [[0xA5], [0xA5]]
+    await send_frame(dut, pins, chans)
+    check_frame(mon, chans, sel)
+    assert sorted(set(h for _, h in mon.pulses[0])) == list(TIMING[sel][1:3])
+    assert sorted(set(h for _, h in mon.pulses[1])) == list(TIMING_SK[sel])
+    assert set(mon.periods(1)) == {TIMING[sel][3]}
+
+
+@cocotb.test()
+async def test_18a_channel_type_32mhz(dut):
+    await channel_type_for_sel(dut, 1)
+
+
+@cocotb.test()
+async def test_18b_channel_type_20mhz(dut):
+    await channel_type_for_sel(dut, 2)
